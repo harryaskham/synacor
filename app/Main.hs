@@ -30,43 +30,7 @@ data Value
   | ValRegister RegisterId
   deriving (Show)
 
-toNat15 :: RegisterMap -> Value -> Nat15
-toNat15 _ (ValNumber n) = n
-toNat15 _ (ValAddress _) = error "Address arithmetic performed"
-toNat15 rm (ValRegister i) =
-  case rm M.! i of
-    (Register (Just v)) -> toNat15 rm v
-    (Register (Nothing)) -> error ("Dereferencing empty register: " <> (show i))
-
 type Stack = [Value]
-
-data OpCode
-  = OpHalt
-  | OpOut
-  | OpNoop
-  deriving (Eq, Ord, Show)
-
-toOpCode :: Nat15 -> OpCode
-toOpCode 0 = OpHalt
-toOpCode 19 = OpOut
-toOpCode 21 = OpNoop
-toOpCode i = error $ "Op not implemented: " <> (show i)
-
-numArgs :: OpCode -> Integer
-numArgs OpHalt = 0
-numArgs OpOut = 1
-numArgs OpNoop = 0
-
-mkMemory :: [Word16] -> Memory
-mkMemory bs = M.fromList [(i, parseWord16 b) | (i, b) <- zip [Address 0 ..] bs]
-
-parseWord16 :: Word16 -> Value
-parseWord16 b
-  | bi <= 32767 = ValNumber (toMod bi)
-  | bi <= 32775 = ValRegister (toMod $ bi - 32768)
-  | otherwise = error $ "Invalid byte encountered: " <> show b
-  where
-    bi = toInteger b
 
 data Machine = Machine
   { _memory :: Memory,
@@ -79,6 +43,57 @@ data Machine = Machine
   }
 
 makeLenses ''Machine
+
+toNat15 :: Machine -> Value -> Nat15
+toNat15 _ (ValNumber n) = n
+toNat15 _ (ValAddress _) = error "Address arithmetic performed"
+toNat15 m (ValRegister i) =
+  case (m ^. registers) M.! i of
+    (Register (Just v)) -> toNat15 m v
+    (Register Nothing) -> error ("Dereferencing empty register: " <> show i)
+
+data OpCode
+  = OpHalt
+  | OpJmp
+  | OpJt
+  | OpJf
+  | OpOut
+  | OpNoop
+  deriving (Eq, Ord, Show)
+
+toOpCode :: Nat15 -> OpCode
+toOpCode 0 = OpHalt
+toOpCode 6 = OpJmp
+toOpCode 7 = OpJt
+toOpCode 8 = OpJf
+toOpCode 19 = OpOut
+toOpCode 21 = OpNoop
+toOpCode i = error $ "Op not implemented: " <> show i
+
+numArgs :: OpCode -> Integer
+numArgs OpHalt = 0
+numArgs OpJmp = 1
+numArgs OpJt = 2
+numArgs OpJf = 2
+numArgs OpOut = 1
+numArgs OpNoop = 0
+
+isJump :: OpCode -> Bool
+isJump OpJmp = True
+isJump OpJt = True
+isJump OpJf = True
+isJump _ = False
+
+mkMemory :: [Word16] -> Memory
+mkMemory bs = M.fromList [(i, parseWord16 b) | (i, b) <- zip [Address 0 ..] bs]
+
+parseWord16 :: Word16 -> Value
+parseWord16 b
+  | bi <= 32767 = ValNumber (toMod bi)
+  | bi <= 32775 = ValRegister (toMod $ bi - 32768)
+  | otherwise = error $ "Invalid byte encountered: " <> show b
+  where
+    bi = toInteger b
 
 mkMachine :: Memory -> Machine
 mkMachine mem =
@@ -93,7 +108,7 @@ mkMachine mem =
     }
 
 nat15At :: Machine -> Address -> Nat15
-nat15At m a = toNat15 (m ^. registers) $ (m ^. memory) M.! a
+nat15At m a = toNat15 m $ (m ^. memory) M.! a
 
 step :: Machine -> Machine
 step m = runOp m opCode args
@@ -103,14 +118,17 @@ step m = runOp m opCode args
 
 runOp :: Machine -> OpCode -> [Value] -> Machine
 runOp m opCode args =
-  --traceShow (m ^. pc, m ^. memory, opCode, args) $
-  m' & pc %~ (+ (1 + fromIntegral (length args)))
+  traceShow (m ^. pc, opCode, args) $
+    if jumped then m' else m' & pc %~ (+ (1 + fromIntegral (length args)))
   where
-    m' =
+    (m', jumped) =
       case opCode of
-        OpHalt -> m & halted .~ True
-        OpOut -> let (v : _) = args in m & stdOut ?~ (chr . fromIntegral . unMod . toNat15 (m ^. registers) $ v)
-        OpNoop -> m
+        OpHalt -> (m & halted .~ True, False)
+        OpJmp -> (let ((ValNumber a) : _) = args in m & pc .~ Address a, True)
+        OpJt -> let (a : b : _) = args in if toNat15 m a /= 0 then (m & pc .~ Address (toNat15 m b), True) else (m, False)
+        OpJf -> let (a : b : _) = args in if toNat15 m a == 0 then (m & pc .~ Address (toNat15 m b), True) else (m, False)
+        OpOut -> (let (v : _) = args in m & stdOut ?~ (chr . fromIntegral . unMod . toNat15 m $ v), False)
+        OpNoop -> (m, False)
 
 runMachine :: Machine -> IO ()
 runMachine m' = do
@@ -145,5 +163,4 @@ main = do
       testBS = [19, 65, 21, 0]
       --machine = mkMachine (mkMemory testBS)
       machine = mkMachine (mkMemory binBS)
-  print testBS
   runMachine machine
