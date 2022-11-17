@@ -1,0 +1,19 @@
+#+TITLE: Synacor Challenge
+
+Solution to the [[https://challenge.synacor.com/][Synacor Challenge]]
+
+~synacor.cabal~ is the source of truth, with Nix deriving everything from here.
+
+* Running
+- To run with Cabal, ~cabal run synacor~
+- To run with Nix manually, ~cabal2nix . > default.nix && nix-build release.nix && result/bin/synacor~
+- To run with Nix automatically, ~cabal --enable-nix run synacor~
+- For GHCi, ~cabal v2-repl~ or ~cabal --enable-nix v2-repl~
+
+* Testing
+- ~cabal test~ will run the contents of ~test/TestSuite.hs~
+- Running with nix manually above will run both the tests and the project, by default
+
+* Adding New Modules
+- For every new module added, ~synacor.cabal~ needs updating.
+- We also need to run ~gen-hie . > hie.yaml~ for HLS to pick the new modules up.
