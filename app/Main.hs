@@ -8,7 +8,8 @@ import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
 import Relude.Unsafe qualified as U
-import System.IO (putChar)
+import System.IO (getChar, getLine, putChar)
+import Prelude hiding (getLine)
 
 newtype Register = Register Value deriving (Show)
 
@@ -184,7 +185,7 @@ runOp m opCode args =
   --traceShow (m ^. stack) $
   --  traceShow (m ^. registers) $
   --    traceShow (m ^. pc, opCode, args) $
-  if jumped then m' else m' & pc .~ nextInstr
+  resetOut $ if jumped then m' else m' & pc .~ nextInstr
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
@@ -192,6 +193,7 @@ runOp m opCode args =
     push v = m & stack %~ (v :)
     nextInstr = m ^. pc + 1 + fromIntegral (length args)
     unjust (Just x) = x
+    resetOut m = if opCode == OpOut then m else m & stdOut .~ Nothing
     (m', jumped) =
       case opCode of
         OpHalt -> (m & halted .~ True, False)
@@ -224,16 +226,23 @@ runOp m opCode args =
         OpNoop -> (m, False)
 
 runMachine :: Machine -> IO ()
-runMachine m = do
-  mIn <- do
-    if getOpCode m == OpIn
-      then do
-        c <- getChar
-        return $ m & stdIn .~ Just c
-      else return m
-  let m' = step mIn
-  forM_ (m' ^. stdOut) putChar
-  if m' ^. halted then return () else runMachine m'
+runMachine = loop Nothing
+  where
+    loop lastIn m = do
+      (mIn, lastIn') <- do
+        if getOpCode m == OpIn
+          then do
+            (c : nextIn) <- maybe ((++ "\n") <$> getLine) return lastIn
+            return $
+              ( m & stdIn ?~ c,
+                case nextIn of
+                  [] -> Nothing
+                  xs -> Just xs
+              )
+          else return (m, lastIn)
+      let m' = step mIn
+      forM_ (m' ^. stdOut) putChar
+      if m' ^. halted then return () else loop lastIn' m'
 
 encodeWord16 :: Word16 -> [Word8]
 encodeWord16 = BL.unpack . toLazyByteString . word16LE
