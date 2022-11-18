@@ -6,16 +6,17 @@ import Data.ByteString.Builder (toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
+import Relude.Unsafe qualified as U
 import System.IO (putChar)
 
-newtype Register = Register (Maybe Value)
+newtype Register = Register Value
 
 type RegisterId = Integer `Mod` 8
 
 type RegisterMap = Map RegisterId Register
 
 mkRegisterMap :: RegisterMap
-mkRegisterMap = M.fromList $ zip [0 .. 7] (repeat $ Register Nothing)
+mkRegisterMap = M.fromList $ zip [0 .. 7] (repeat $ Register (ValNumber 0))
 
 newtype Address = Address Nat15 deriving (Enum, Num, Ord, Eq, Show)
 
@@ -46,13 +47,11 @@ makeLenses ''Machine
 toNat15 :: Machine -> Value -> Nat15
 toNat15 _ (ValNumber n) = n
 toNat15 _ (ValAddress _) = error "Address arithmetic performed"
-toNat15 m (ValRegister i) =
-  case (m ^. registers) M.! i of
-    (Register (Just v)) -> toNat15 m v
-    (Register Nothing) -> error ("Dereferencing empty register: " <> show i)
+toNat15 m (ValRegister i) = let (Register v) = (m ^. registers) M.! i in toNat15 m v
 
 data OpCode
   = OpHalt
+  | OpSet
   | OpJmp
   | OpJt
   | OpJf
@@ -62,6 +61,7 @@ data OpCode
 
 toOpCode :: Nat15 -> OpCode
 toOpCode 0 = OpHalt
+toOpCode 1 = OpSet
 toOpCode 6 = OpJmp
 toOpCode 7 = OpJt
 toOpCode 8 = OpJf
@@ -71,6 +71,7 @@ toOpCode i = error $ "Op not implemented: " <> show i
 
 numArgs :: OpCode -> Integer
 numArgs OpHalt = 0
+numArgs OpSet = 2
 numArgs OpJmp = 1
 numArgs OpJt = 2
 numArgs OpJf = 2
@@ -123,15 +124,23 @@ takeNat15Args m = toTuple3 . fmap (toNat15 m) . take 3
     toTuple3 [a] = (a, 0, 0)
     toTuple3 _ = (0, 0, 0)
 
+takeRegisterArg :: [Value] -> RegisterId
+takeRegisterArg = deref . U.head
+  where
+    deref (ValRegister rId) = rId
+    deref _ = error "Bad dereference"
+
 runOp :: Machine -> OpCode -> [Value] -> Machine
 runOp m opCode args =
   traceShow (m ^. pc, opCode, args) $
     if jumped then m' else m' & pc %~ (+ (1 + fromIntegral (length args)))
   where
     (a, b, _) = takeNat15Args m args
+    ra = takeRegisterArg args
     (m', jumped) =
       case opCode of
         OpHalt -> (m & halted .~ True, False)
+        OpSet -> (m & registers %~ M.adjust (const . Register . ValNumber $ b) ra, False)
         OpJmp -> (m & pc .~ Address a, True)
         OpJt -> if a /= 0 then (m & pc .~ Address b, True) else (m, False)
         OpJf -> if a == 0 then (m & pc .~ Address b, True) else (m, False)
