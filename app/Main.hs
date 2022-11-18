@@ -55,6 +55,7 @@ data OpCode
   | OpJmp
   | OpJt
   | OpJf
+  | OpAdd
   | OpOut
   | OpNoop
   deriving (Eq, Ord, Show)
@@ -65,6 +66,7 @@ toOpCode 1 = OpSet
 toOpCode 6 = OpJmp
 toOpCode 7 = OpJt
 toOpCode 8 = OpJf
+toOpCode 9 = OpAdd
 toOpCode 19 = OpOut
 toOpCode 21 = OpNoop
 toOpCode i = error $ "Op not implemented: " <> show i
@@ -75,6 +77,7 @@ numArgs OpSet = 2
 numArgs OpJmp = 1
 numArgs OpJt = 2
 numArgs OpJf = 2
+numArgs OpAdd = 3
 numArgs OpOut = 1
 numArgs OpNoop = 0
 
@@ -101,7 +104,7 @@ mkMachine mem =
     { _memory = mem,
       _registers = mkRegisterMap,
       _stack = [],
-      _pc = (Address 0),
+      _pc = Address 0,
       _stdOut = Nothing,
       _stdIn = Nothing,
       _halted = False
@@ -135,7 +138,7 @@ runOp m opCode args =
   traceShow (m ^. pc, opCode, args) $
     if jumped then m' else m' & pc %~ (+ (1 + fromIntegral (length args)))
   where
-    (a, b, _) = takeNat15Args m args
+    (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
     (m', jumped) =
       case opCode of
@@ -144,6 +147,7 @@ runOp m opCode args =
         OpJmp -> (m & pc .~ Address a, True)
         OpJt -> if a /= 0 then (m & pc .~ Address b, True) else (m, False)
         OpJf -> if a == 0 then (m & pc .~ Address b, True) else (m, False)
+        OpAdd -> (m & registers %~ M.adjust (const . Register . ValNumber $ b + c) ra, False)
         OpOut -> (m & stdOut ?~ (chr . fromIntegral . unMod $ a), False)
         OpNoop -> (m, False)
 
