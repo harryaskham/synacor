@@ -77,30 +77,30 @@ data OpCode
   | OpNoop
   deriving (Eq, Ord, Show)
 
-toOpCode :: Nat15 -> OpCode
-toOpCode 0 = OpHalt
-toOpCode 1 = OpSet
-toOpCode 2 = OpPush
-toOpCode 3 = OpPop
-toOpCode 4 = OpEq
-toOpCode 5 = OpGt
-toOpCode 6 = OpJmp
-toOpCode 7 = OpJt
-toOpCode 8 = OpJf
-toOpCode 9 = OpAdd
-toOpCode 10 = OpMult
-toOpCode 11 = OpMod
-toOpCode 12 = OpAnd
-toOpCode 13 = OpOr
-toOpCode 14 = OpNot
-toOpCode 15 = OpRmem
-toOpCode 16 = OpWmem
-toOpCode 17 = OpCall
-toOpCode 18 = OpRet
-toOpCode 19 = OpOut
-toOpCode 20 = OpIn
-toOpCode 21 = OpNoop
-toOpCode i = error $ "Op not implemented: " <> show i
+toOpCode :: Nat15 -> Maybe OpCode
+toOpCode 0 = Just OpHalt
+toOpCode 1 = Just OpSet
+toOpCode 2 = Just OpPush
+toOpCode 3 = Just OpPop
+toOpCode 4 = Just OpEq
+toOpCode 5 = Just OpGt
+toOpCode 6 = Just OpJmp
+toOpCode 7 = Just OpJt
+toOpCode 8 = Just OpJf
+toOpCode 9 = Just OpAdd
+toOpCode 10 = Just OpMult
+toOpCode 11 = Just OpMod
+toOpCode 12 = Just OpAnd
+toOpCode 13 = Just OpOr
+toOpCode 14 = Just OpNot
+toOpCode 15 = Just OpRmem
+toOpCode 16 = Just OpWmem
+toOpCode 17 = Just OpCall
+toOpCode 18 = Just OpRet
+toOpCode 19 = Just OpOut
+toOpCode 20 = Just OpIn
+toOpCode 21 = Just OpNoop
+toOpCode _ = Nothing
 
 numArgs :: OpCode -> Integer
 numArgs OpHalt = 0
@@ -158,13 +158,15 @@ mkMachine mem =
 nat15At :: Machine -> Address -> Nat15
 nat15At m a = toNat15 m $ (m ^. memory) M.! a
 
-getOpCode :: Machine -> OpCode
+getOpCode :: Machine -> Maybe OpCode
 getOpCode m = toOpCode . nat15At m $ m ^. pc
 
 step :: Machine -> Machine
 step m = runOp m opCode args
   where
-    opCode = getOpCode m
+    opCode = case getOpCode m of
+      Nothing -> error "Invalid opcode"
+      Just op -> op
     args = ((m ^. memory) M.!) <$> [m ^. pc + Address 1 .. m ^. pc + Address (toMod $ numArgs opCode)]
 
 takeNat15Args :: Machine -> [Value] -> (Nat15, Nat15, Nat15)
@@ -254,7 +256,7 @@ runMachine =
       return $ s ++ "\n"
     loop lastIn m = do
       (mIn, lastIn') <- do
-        if getOpCode m == OpIn
+        if getOpCode m == Just OpIn
           then do
             (c : nextIn) <- maybe getInput return lastIn
             return $
@@ -281,19 +283,27 @@ readFile16 path = do
             return (x : xs)
   return $ runGet getter input
 
+-- TODO: Step through assembly while going between rooms, look for Jt / Jf / Eq / Gt failures
 main :: IO ()
 --main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
 main = putTextLn . unlines . fmap T.pack . prettyMemory . mkMemory =<< readFile16 "data/challenge.bin"
 
 prettyMemory :: Memory -> [String]
-prettyMemory mem = reverse . pretty . M.toList $ mem
+prettyMemory mem = pretty . M.toList $ mem
   where
     machine = mkMachine mem
     pretty [] = []
     pretty ((i, opB) : rest) =
       let opCode = toOpCode (toNat15 machine opB)
-          nArgs = fromIntegral $ numArgs opCode
-          args = snd <$> take nArgs rest
-          rest' = drop nArgs rest
-       in traceShow (unAddress i, opCode, args) $
-            show (opCode, args) : pretty rest'
+          toC (ValNumber v) = chr . fromIntegral $ unMod v
+          toC _ = '#'
+       in case opCode of
+            Just op ->
+              let nArgs = fromIntegral $ numArgs op
+                  args = snd <$> take nArgs rest
+                  rest' = drop nArgs rest
+               in case op of
+                    OpOut -> show (toC <$> args) : pretty rest'
+                    _ -> show (unAddress i, op, args) : pretty rest'
+            Nothing ->
+              show (unAddress i, "GLOBAL", opB) : pretty rest
