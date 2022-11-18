@@ -7,6 +7,7 @@ import Data.ByteString.Builder (toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
+import Data.Text qualified as T
 import Relude.Unsafe qualified as U
 import System.IO (getChar, getLine, putChar)
 import Prelude hiding (getLine)
@@ -226,13 +227,36 @@ runOp m opCode args =
         OpNoop -> (m, False)
 
 runMachine :: Machine -> IO ()
-runMachine = loop Nothing
+runMachine =
+  loop
+    ( Just
+        ( T.unpack $
+            unlines
+              [ "take tablet",
+                "doorway",
+                "north",
+                "north",
+                "bridge",
+                "continue",
+                "down",
+                "east",
+                "take empty lantern",
+                "west",
+                "west",
+                "passage",
+                "ladder"
+              ]
+        )
+    )
   where
+    getInput = do
+      s <- getLine
+      return $ s ++ "\n"
     loop lastIn m = do
       (mIn, lastIn') <- do
         if getOpCode m == OpIn
           then do
-            (c : nextIn) <- maybe ((++ "\n") <$> getLine) return lastIn
+            (c : nextIn) <- maybe getInput return lastIn
             return $
               ( m & stdIn ?~ c,
                 case nextIn of
@@ -261,11 +285,4 @@ readFile16 path = do
   return $ runGet getter input
 
 main :: IO ()
-main = do
-  -- binBS <- readFileBS "data/challenge.bin"
-  binBS <- readFile16 "data/challenge.bin"
-  --testBS = [9, 32768, 32769, 4, 19, 32768]
-  --testBS = [19, 65, 21, 0]
-  --machine = mkMachine (mkMemory testBS)
-  let machine = mkMachine (mkMemory binBS)
-  runMachine machine
+main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
