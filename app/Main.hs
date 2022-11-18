@@ -268,7 +268,7 @@ runMachine =
                   xs -> Just xs
               )
           else return (m, lastIn)
-      let dbg = False -- TODO: Set up a debugger
+      let dbg = False -- TODO: Set up a debugger / breakpointing system
       let m' = step dbg mIn
       forM_ (m' ^. stdOut) putChar
       if m' ^. halted then return () else loop lastIn' m'
