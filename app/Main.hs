@@ -2,6 +2,7 @@ module Main where
 
 import Control.Lens (makeLenses, (%~), (.~), (?~), (^.))
 import Data.Binary.Get (getWord16le, isEmpty, runGet)
+import Data.Bits
 import Data.ByteString.Builder (toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as M
@@ -52,10 +53,16 @@ toNat15 m (ValRegister i) = let (Register v) = (m ^. registers) M.! i in toNat15
 data OpCode
   = OpHalt
   | OpSet
+  | OpPush
+  | OpPop
+  | OpEq
+  | OpGt
   | OpJmp
   | OpJt
   | OpJf
   | OpAdd
+  | OpAnd
+  | OpOr
   | OpOut
   | OpNoop
   deriving (Eq, Ord, Show)
@@ -63,10 +70,16 @@ data OpCode
 toOpCode :: Nat15 -> OpCode
 toOpCode 0 = OpHalt
 toOpCode 1 = OpSet
+toOpCode 2 = OpPush
+toOpCode 3 = OpPop
+toOpCode 4 = OpEq
+toOpCode 5 = OpGt
 toOpCode 6 = OpJmp
 toOpCode 7 = OpJt
 toOpCode 8 = OpJf
 toOpCode 9 = OpAdd
+toOpCode 12 = OpAnd
+toOpCode 13 = OpOr
 toOpCode 19 = OpOut
 toOpCode 21 = OpNoop
 toOpCode i = error $ "Op not implemented: " <> show i
@@ -74,10 +87,16 @@ toOpCode i = error $ "Op not implemented: " <> show i
 numArgs :: OpCode -> Integer
 numArgs OpHalt = 0
 numArgs OpSet = 2
+numArgs OpPush = 1
+numArgs OpPop = 1
+numArgs OpEq = 3
+numArgs OpGt = 3
 numArgs OpJmp = 1
 numArgs OpJt = 2
 numArgs OpJf = 2
 numArgs OpAdd = 3
+numArgs OpAnd = 3
+numArgs OpOr = 3
 numArgs OpOut = 1
 numArgs OpNoop = 0
 
@@ -140,14 +159,21 @@ runOp m opCode args =
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
+    setA v = m & registers %~ M.adjust (const . Register . ValNumber $ v) ra
     (m', jumped) =
       case opCode of
         OpHalt -> (m & halted .~ True, False)
-        OpSet -> (m & registers %~ M.adjust (const . Register . ValNumber $ b) ra, False)
+        OpSet -> (setA b, False)
+        OpPush -> (m & stack %~ (ValNumber a :), False)
+        OpPop -> (let (v : vs) = m ^. stack in setA (toNat15 m v) & stack .~ vs, False)
+        OpEq -> (setA $ if b == c then 1 else 0, False)
+        OpGt -> (setA $ if b > c then 1 else 0, False)
         OpJmp -> (m & pc .~ Address a, True)
         OpJt -> if a /= 0 then (m & pc .~ Address b, True) else (m, False)
         OpJf -> if a == 0 then (m & pc .~ Address b, True) else (m, False)
-        OpAdd -> (m & registers %~ M.adjust (const . Register . ValNumber $ b + c) ra, False)
+        OpAdd -> (setA $ b + c, False)
+        OpAnd -> (setA $ toMod $ unMod b .&. unMod c, False)
+        OpOr -> (setA $ toMod $ unMod b .|. unMod c, False)
         OpOut -> (m & stdOut ?~ (chr . fromIntegral . unMod $ a), False)
         OpNoop -> (m, False)
 
