@@ -10,7 +10,7 @@ import Data.Modular (Mod, toMod, unMod)
 import Relude.Unsafe qualified as U
 import System.IO (putChar)
 
-newtype Register = Register Value
+newtype Register = Register Value deriving (Show)
 
 type RegisterId = Integer `Mod` 8
 
@@ -19,7 +19,7 @@ type RegisterMap = Map RegisterId Register
 mkRegisterMap :: RegisterMap
 mkRegisterMap = M.fromList $ zip [0 .. 7] (repeat $ Register (ValNumber 0))
 
-newtype Address = Address Nat15 deriving (Enum, Num, Ord, Eq, Show)
+newtype Address = Address {unAddress :: Nat15} deriving (Enum, Num, Ord, Eq, Show)
 
 type Memory = Map Address Value
 
@@ -47,7 +47,7 @@ makeLenses ''Machine
 
 toNat15 :: Machine -> Value -> Nat15
 toNat15 _ (ValNumber n) = n
-toNat15 _ (ValAddress _) = error "Address arithmetic performed"
+toNat15 _ (ValAddress (Address a)) = a
 toNat15 m (ValRegister i) = let (Register v) = (m ^. registers) M.! i in toNat15 m v
 
 data OpCode
@@ -61,8 +61,13 @@ data OpCode
   | OpJt
   | OpJf
   | OpAdd
+  | OpMult
+  | OpMod
   | OpAnd
   | OpOr
+  | OpNot
+  | OpRmem
+  | OpCall
   | OpOut
   | OpNoop
   deriving (Eq, Ord, Show)
@@ -78,8 +83,13 @@ toOpCode 6 = OpJmp
 toOpCode 7 = OpJt
 toOpCode 8 = OpJf
 toOpCode 9 = OpAdd
+toOpCode 10 = OpMult
+toOpCode 11 = OpMod
 toOpCode 12 = OpAnd
 toOpCode 13 = OpOr
+toOpCode 14 = OpNot
+toOpCode 15 = OpRmem
+toOpCode 17 = OpCall
 toOpCode 19 = OpOut
 toOpCode 21 = OpNoop
 toOpCode i = error $ "Op not implemented: " <> show i
@@ -95,8 +105,13 @@ numArgs OpJmp = 1
 numArgs OpJt = 2
 numArgs OpJf = 2
 numArgs OpAdd = 3
+numArgs OpMult = 3
+numArgs OpMod = 3
 numArgs OpAnd = 3
 numArgs OpOr = 3
+numArgs OpNot = 2
+numArgs OpRmem = 2
+numArgs OpCall = 1
 numArgs OpOut = 1
 numArgs OpNoop = 0
 
@@ -154,17 +169,21 @@ takeRegisterArg = deref . U.head
 
 runOp :: Machine -> OpCode -> [Value] -> Machine
 runOp m opCode args =
-  traceShow (m ^. pc, opCode, args) $
-    if jumped then m' else m' & pc %~ (+ (1 + fromIntegral (length args)))
+  traceShow (m ^. stack) $
+    traceShow (m ^. registers) $
+      traceShow (m ^. pc, opCode, args) $
+        if jumped then m' else m' & pc .~ nextInstr
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
     setA v = m & registers %~ M.adjust (const . Register . ValNumber $ v) ra
+    push v = m & stack %~ (v :)
+    nextInstr = m ^. pc + 1 + fromIntegral (length args)
     (m', jumped) =
       case opCode of
         OpHalt -> (m & halted .~ True, False)
         OpSet -> (setA b, False)
-        OpPush -> (m & stack %~ (ValNumber a :), False)
+        OpPush -> (push $ ValNumber a, False)
         OpPop -> (let (v : vs) = m ^. stack in setA (toNat15 m v) & stack .~ vs, False)
         OpEq -> (setA $ if b == c then 1 else 0, False)
         OpGt -> (setA $ if b > c then 1 else 0, False)
@@ -172,8 +191,14 @@ runOp m opCode args =
         OpJt -> if a /= 0 then (m & pc .~ Address b, True) else (m, False)
         OpJf -> if a == 0 then (m & pc .~ Address b, True) else (m, False)
         OpAdd -> (setA $ b + c, False)
+        OpMult -> (setA $ b * c, False)
+        OpMod -> (setA $ toMod $ unMod b `mod` unMod c, False)
         OpAnd -> (setA $ toMod $ unMod b .&. unMod c, False)
         OpOr -> (setA $ toMod $ unMod b .|. unMod c, False)
+        -- TODO: Is this a valid 15-bit complement???
+        OpNot -> (setA $ toMod $ complement $ unMod b, False)
+        OpRmem -> (setA $ toNat15 m $ (m ^. memory) M.! (Address b), False)
+        OpCall -> (push (ValAddress nextInstr) & pc .~ Address a, True)
         OpOut -> (m & stdOut ?~ (chr . fromIntegral . unMod $ a), False)
         OpNoop -> (m, False)
 
