@@ -216,7 +216,6 @@ runOp dbg m opCode args =
         OpMod -> (setA $ toMod $ unMod b `mod` unMod c, False)
         OpAnd -> (setA $ toMod $ unMod b .&. unMod c, False)
         OpOr -> (setA $ toMod $ unMod b .|. unMod c, False)
-        -- TODO: Is this a valid 15-bit complement???
         OpNot -> (setA $ toMod $ complement $ unMod b, False)
         OpRmem -> (setA $ toNat15 m $ (m ^. memory) M.! Address b, False)
         OpWmem -> (m & memory %~ M.insert (Address a) (ValNumber b), False)
