@@ -71,6 +71,7 @@ data OpCode
   | OpCall
   | OpRet
   | OpOut
+  | OpIn
   | OpNoop
   deriving (Eq, Ord, Show)
 
@@ -95,6 +96,7 @@ toOpCode 16 = OpWmem
 toOpCode 17 = OpCall
 toOpCode 18 = OpRet
 toOpCode 19 = OpOut
+toOpCode 20 = OpIn
 toOpCode 21 = OpNoop
 toOpCode i = error $ "Op not implemented: " <> show i
 
@@ -119,6 +121,7 @@ numArgs OpWmem = 2
 numArgs OpCall = 1
 numArgs OpRet = 0
 numArgs OpOut = 1
+numArgs OpIn = 1
 numArgs OpNoop = 0
 
 isJump :: OpCode -> Bool
@@ -153,10 +156,13 @@ mkMachine mem =
 nat15At :: Machine -> Address -> Nat15
 nat15At m a = toNat15 m $ (m ^. memory) M.! a
 
+getOpCode :: Machine -> OpCode
+getOpCode m = toOpCode . nat15At m $ m ^. pc
+
 step :: Machine -> Machine
 step m = runOp m opCode args
   where
-    opCode = toOpCode . nat15At m $ m ^. pc
+    opCode = getOpCode m
     args = ((m ^. memory) M.!) <$> [m ^. pc + Address 1 .. m ^. pc + Address (toMod $ numArgs opCode)]
 
 takeNat15Args :: Machine -> [Value] -> (Nat15, Nat15, Nat15)
@@ -185,6 +191,7 @@ runOp m opCode args =
     setA v = m & registers %~ M.adjust (const . Register . ValNumber $ v) ra
     push v = m & stack %~ (v :)
     nextInstr = m ^. pc + 1 + fromIntegral (length args)
+    unjust (Just x) = x
     (m', jumped) =
       case opCode of
         OpHalt -> (m & halted .~ True, False)
@@ -213,13 +220,20 @@ runOp m opCode args =
             True
           )
         OpOut -> (m & stdOut ?~ (chr . fromIntegral . unMod $ a), False)
+        OpIn -> (setA (toMod . fromIntegral . ord . unjust $ m ^. stdIn), False)
         OpNoop -> (m, False)
 
 runMachine :: Machine -> IO ()
-runMachine m' = do
-  let m = step m'
-  forM_ (m ^. stdOut) putChar
-  if m ^. halted then return () else runMachine m
+runMachine m = do
+  mIn <- do
+    if getOpCode m == OpIn
+      then do
+        c <- getChar
+        return $ m & stdIn .~ Just c
+      else return m
+  let m' = step mIn
+  forM_ (m' ^. stdOut) putChar
+  if m' ^. halted then return () else runMachine m'
 
 encodeWord16 :: Word16 -> [Word8]
 encodeWord16 = BL.unpack . toLazyByteString . word16LE
