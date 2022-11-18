@@ -67,7 +67,9 @@ data OpCode
   | OpOr
   | OpNot
   | OpRmem
+  | OpWmem
   | OpCall
+  | OpRet
   | OpOut
   | OpNoop
   deriving (Eq, Ord, Show)
@@ -89,7 +91,9 @@ toOpCode 12 = OpAnd
 toOpCode 13 = OpOr
 toOpCode 14 = OpNot
 toOpCode 15 = OpRmem
+toOpCode 16 = OpWmem
 toOpCode 17 = OpCall
+toOpCode 18 = OpRet
 toOpCode 19 = OpOut
 toOpCode 21 = OpNoop
 toOpCode i = error $ "Op not implemented: " <> show i
@@ -111,7 +115,9 @@ numArgs OpAnd = 3
 numArgs OpOr = 3
 numArgs OpNot = 2
 numArgs OpRmem = 2
+numArgs OpWmem = 2
 numArgs OpCall = 1
+numArgs OpRet = 0
 numArgs OpOut = 1
 numArgs OpNoop = 0
 
@@ -169,10 +175,10 @@ takeRegisterArg = deref . U.head
 
 runOp :: Machine -> OpCode -> [Value] -> Machine
 runOp m opCode args =
-  traceShow (m ^. stack) $
-    traceShow (m ^. registers) $
-      traceShow (m ^. pc, opCode, args) $
-        if jumped then m' else m' & pc .~ nextInstr
+  --traceShow (m ^. stack) $
+  --  traceShow (m ^. registers) $
+  --    traceShow (m ^. pc, opCode, args) $
+  if jumped then m' else m' & pc .~ nextInstr
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
@@ -197,8 +203,15 @@ runOp m opCode args =
         OpOr -> (setA $ toMod $ unMod b .|. unMod c, False)
         -- TODO: Is this a valid 15-bit complement???
         OpNot -> (setA $ toMod $ complement $ unMod b, False)
-        OpRmem -> (setA $ toNat15 m $ (m ^. memory) M.! (Address b), False)
+        OpRmem -> (setA $ toNat15 m $ (m ^. memory) M.! Address b, False)
+        OpWmem -> (m & memory %~ M.insert (Address a) (ValNumber b), False)
         OpCall -> (push (ValAddress nextInstr) & pc .~ Address a, True)
+        OpRet ->
+          ( case m ^. stack of
+              [] -> m & halted .~ True
+              (a : vs) -> m & pc .~ Address (toNat15 m a) & stack .~ vs,
+            True
+          )
         OpOut -> (m & stdOut ?~ (chr . fromIntegral . unMod $ a), False)
         OpNoop -> (m, False)
 
