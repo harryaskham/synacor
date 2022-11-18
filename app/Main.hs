@@ -268,9 +268,6 @@ runMachine =
       forM_ (m' ^. stdOut) putChar
       if m' ^. halted then return () else loop lastIn' m'
 
-encodeWord16 :: Word16 -> [Word8]
-encodeWord16 = BL.unpack . toLazyByteString . word16LE
-
 readFile16 :: String -> IO [Word16]
 readFile16 path = do
   input <- BL.readFile path
@@ -285,4 +282,18 @@ readFile16 path = do
   return $ runGet getter input
 
 main :: IO ()
-main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
+--main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
+main = putTextLn . unlines . fmap T.pack . prettyMemory . mkMemory =<< readFile16 "data/challenge.bin"
+
+prettyMemory :: Memory -> [String]
+prettyMemory mem = reverse . pretty . M.toList $ mem
+  where
+    machine = mkMachine mem
+    pretty [] = []
+    pretty ((i, opB) : rest) =
+      let opCode = toOpCode (toNat15 machine opB)
+          nArgs = fromIntegral $ numArgs opCode
+          args = snd <$> take nArgs rest
+          rest' = drop nArgs rest
+       in traceShow (unAddress i, opCode, args) $
+            show (opCode, args) : pretty rest'
