@@ -1,9 +1,8 @@
 module Main where
 
-import Control.Lens
-import Data.Binary.Get
-import Data.ByteString qualified as B
-import Data.ByteString.Builder (doubleBE, toLazyByteString, word16LE)
+import Control.Lens (makeLenses, (%~), (.~), (?~), (^.))
+import Data.Binary.Get (getWord16le, isEmpty, runGet)
+import Data.ByteString.Builder (toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
@@ -116,26 +115,33 @@ step m = runOp m opCode args
     opCode = toOpCode . nat15At m $ m ^. pc
     args = ((m ^. memory) M.!) <$> [m ^. pc + Address 1 .. m ^. pc + Address (toMod $ numArgs opCode)]
 
+takeNat15Args :: Machine -> [Value] -> (Nat15, Nat15, Nat15)
+takeNat15Args m = toTuple3 . fmap (toNat15 m) . take 3
+  where
+    toTuple3 [a, b, c] = (a, b, c)
+    toTuple3 [a, b] = (a, b, 0)
+    toTuple3 [a] = (a, 0, 0)
+    toTuple3 _ = (0, 0, 0)
+
 runOp :: Machine -> OpCode -> [Value] -> Machine
 runOp m opCode args =
   traceShow (m ^. pc, opCode, args) $
     if jumped then m' else m' & pc %~ (+ (1 + fromIntegral (length args)))
   where
+    (a, b, _) = takeNat15Args m args
     (m', jumped) =
       case opCode of
         OpHalt -> (m & halted .~ True, False)
-        OpJmp -> (let ((ValNumber a) : _) = args in m & pc .~ Address a, True)
-        OpJt -> let (a : b : _) = args in if toNat15 m a /= 0 then (m & pc .~ Address (toNat15 m b), True) else (m, False)
-        OpJf -> let (a : b : _) = args in if toNat15 m a == 0 then (m & pc .~ Address (toNat15 m b), True) else (m, False)
-        OpOut -> (let (v : _) = args in m & stdOut ?~ (chr . fromIntegral . unMod . toNat15 m $ v), False)
+        OpJmp -> (m & pc .~ Address a, True)
+        OpJt -> if a /= 0 then (m & pc .~ Address b, True) else (m, False)
+        OpJf -> if a == 0 then (m & pc .~ Address b, True) else (m, False)
+        OpOut -> (m & stdOut ?~ (chr . fromIntegral . unMod $ a), False)
         OpNoop -> (m, False)
 
 runMachine :: Machine -> IO ()
 runMachine m' = do
   let m = step m'
-  case m ^. stdOut of
-    Nothing -> return ()
-    Just s -> putChar s
+  forM_ (m ^. stdOut) putChar
   if m ^. halted then return () else runMachine m
 
 encodeWord16 :: Word16 -> [Word8]
@@ -145,8 +151,8 @@ readFile16 :: String -> IO [Word16]
 readFile16 path = do
   input <- BL.readFile path
   let getter = do
-        empty <- isEmpty
-        if empty
+        done <- isEmpty
+        if done
           then return []
           else do
             x <- getWord16le
@@ -158,9 +164,8 @@ main :: IO ()
 main = do
   -- binBS <- readFileBS "data/challenge.bin"
   binBS <- readFile16 "data/challenge.bin"
-  let testBS :: [Word16]
-      --testBS = [9, 32768, 32769, 4, 19, 32768]
-      testBS = [19, 65, 21, 0]
-      --machine = mkMachine (mkMemory testBS)
-      machine = mkMachine (mkMemory binBS)
+  --testBS = [9, 32768, 32769, 4, 19, 32768]
+  --testBS = [19, 65, 21, 0]
+  --machine = mkMachine (mkMemory testBS)
+  let machine = mkMachine (mkMemory binBS)
   runMachine machine
