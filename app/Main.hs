@@ -3,7 +3,7 @@ module Main where
 import Control.Lens (makeLenses, (%~), (.~), (?~), (^.))
 import Data.Binary.Get (getWord16le, isEmpty, runGet)
 import Data.Bits
-import Data.ByteString.Builder (toLazyByteString, word16LE)
+import Data.ByteString.Builder (doubleBE, toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
@@ -161,8 +161,8 @@ nat15At m a = toNat15 m $ (m ^. memory) M.! a
 getOpCode :: Machine -> Maybe OpCode
 getOpCode m = toOpCode . nat15At m $ m ^. pc
 
-step :: Machine -> Machine
-step m = runOp m opCode args
+step :: Bool -> Machine -> Machine
+step dbg m = runOp dbg m opCode args
   where
     opCode = case getOpCode m of
       Nothing -> error "Invalid opcode"
@@ -183,12 +183,15 @@ takeRegisterArg = deref . U.head
     deref (ValRegister rId) = rId
     deref _ = error "Bad dereference"
 
-runOp :: Machine -> OpCode -> [Value] -> Machine
-runOp m opCode args =
-  --traceShow (m ^. stack) $
-  --  traceShow (m ^. registers) $
-  --    traceShow (m ^. pc, opCode, args) $
-  resetOut $ if jumped then m' else m' & pc .~ nextInstr
+runOp :: Bool -> Machine -> OpCode -> [Value] -> Machine
+runOp dbg m opCode args =
+  let outM = resetOut $ if jumped then m' else m' & pc .~ nextInstr
+   in if dbg
+        then
+          traceShow (m ^. stack) $
+            traceShow (m ^. registers) $
+              traceShow (m ^. pc, opCode, args) $ outM
+        else outM
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
@@ -266,7 +269,8 @@ runMachine =
                   xs -> Just xs
               )
           else return (m, lastIn)
-      let m' = step mIn
+      let dbg = False -- TODO: Set up a debugger
+      let m' = step dbg mIn
       forM_ (m' ^. stdOut) putChar
       if m' ^. halted then return () else loop lastIn' m'
 
@@ -285,8 +289,9 @@ readFile16 path = do
 
 -- TODO: Step through assembly while going between rooms, look for Jt / Jf / Eq / Gt failures
 main :: IO ()
---main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
-main = putTextLn . unlines . fmap T.pack . prettyMemory . mkMemory =<< readFile16 "data/challenge.bin"
+main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
+
+--main = putTextLn . unlines . fmap T.pack . prettyMemory . mkMemory =<< readFile16 "data/challenge.bin"
 
 prettyMemory :: Memory -> [String]
 prettyMemory mem = pretty . M.toList $ mem
