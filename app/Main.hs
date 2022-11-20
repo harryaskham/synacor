@@ -1,6 +1,10 @@
 module Main where
 
+import Control.Exception
 import Control.Lens (makeLenses, (%~), (.~), (?~), (^.))
+import Control.Monad.Memo
+import Control.Monad.Par
+import Control.Monad.Par.Combinator
 import Data.Binary.Get (getWord16le, isEmpty, runGet)
 import Data.Bits
 import Data.ByteString.Builder (doubleBE, toLazyByteString, word16LE)
@@ -22,7 +26,11 @@ type RegisterId = Integer `Mod` 8
 type RegisterMap = Map RegisterId Register
 
 mkRegisterMap :: RegisterMap
-mkRegisterMap = M.fromList $ zip [0 .. 7] (repeat $ Register (ValNumber 0))
+mkRegisterMap =
+  M.fromList $
+    zip
+      [0 .. 7]
+      (replicate 8 (Register (ValNumber 0)))
 
 newtype Address = Address {unAddress :: Nat15} deriving (Enum, Num, Ord, Eq, Show)
 
@@ -164,13 +172,15 @@ nat15At m a = toNat15 m $ (m ^. memory) M.! a
 getOpCode :: Machine -> Maybe OpCode
 getOpCode m = toOpCode . nat15At m $ m ^. pc
 
-step :: Machine -> (Machine, OpCode, [Value])
-step m = (runOp m opCode args, opCode, args)
-  where
-    opCode = case getOpCode m of
-      Nothing -> error "Invalid opcode"
-      Just op -> op
-    args = ((m ^. memory) M.!) <$> [m ^. pc + Address 1 .. m ^. pc + Address (toMod $ numArgs opCode)]
+data InvalidOpcodeError = InvalidOpcodeError
+
+step :: Machine -> Either InvalidOpcodeError (Machine, OpCode, [Value])
+step m =
+  case getOpCode m of
+    Nothing -> Left InvalidOpcodeError
+    Just opCode ->
+      let args = ((m ^. memory) M.!) <$> [m ^. pc + Address 1 .. m ^. pc + Address (toMod $ numArgs opCode)]
+       in Right (runOp m opCode args, opCode, args)
 
 takeNat15Args :: Machine -> [Value] -> (Nat15, Nat15, Nat15)
 takeNat15Args m = toTuple3 . fmap (toNat15 m) . take 3
@@ -188,8 +198,8 @@ takeRegisterArg = deref . U.head
 
 runOp :: Machine -> OpCode -> [Value] -> Machine
 runOp m opCode args =
-  traceShow (m ^. pc, opCode, args) $
-    resetOut $ if jumped then m' else m' & pc .~ nextInstr
+  --traceShow (m ^. pc, opCode, args) $
+  resetOut $ if jumped then m' else m' & pc .~ nextInstr
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
@@ -228,8 +238,8 @@ runOp m opCode args =
         OpIn -> (setA (toMod . fromIntegral . ord . unjust $ m ^. stdIn), False)
         OpNoop -> (m, False)
 
-runMachine :: Machine -> IO ()
-runMachine =
+runMachine :: Nat15 -> Machine -> IO ()
+runMachine reg7Override =
   loop
     ( Just
         ( T.unpack $
@@ -284,16 +294,18 @@ runMachine =
                 "use corroded coin",
                 "north",
                 "take teleporter",
-                "use teleporter"
+                "use teleporter",
+                ""
               ]
         )
     )
     False
+    []
   where
     getInput = do
       s <- getLine
       return $ s ++ "\n"
-    loop lastIn dbg m = do
+    loop lastIn dbg history m = do
       (mIn, lastIn') <- do
         if getOpCode m == Just OpIn
           then do
@@ -305,26 +317,43 @@ runMachine =
                   xs -> Just xs
               )
           else return (m, lastIn)
+      -- let breakpoints = S.fromList [5449, 6027] -- before teleport, verification call
       let breakpoints = S.fromList []
-      let dbgBreaks = dbg || ((m ^. pc) `S.member` breakpoints)
-      let (m', opCode, args) = step mIn
-      let dbgLoop = do
-            putStrLn $ "dbg (" <> show (m ^. pc, opCode, args) <> ")> "
-            dbgLine <- getLine
-            case dbgLine of
-              "s" -> return True
-              "c" -> return False
-              "st" -> print (m ^. stack) >> dbgLoop
-              "r" -> print (m ^. registers) >> dbgLoop
-              "dump" -> forM_ (prettyMemory $ m ^. memory) putStrLn >> dbgLoop
-              "block" -> forM_ (blockMemory $ m ^. memory) putStrLn >> dbgLoop
-              _ -> dbgLoop
-      dbg' <-
-        if not dbgBreaks
-          then return False
-          else dbgLoop
-      forM_ (m' ^. stdOut) putChar
-      if m' ^. halted then return () else loop lastIn' dbg' m'
+      let dbgBreak = dbg || ((m ^. pc) `S.member` breakpoints)
+      case step mIn of
+        Left InvalidOpcodeError -> putStrLn $ "Failing due to invalid op code: " <> show (m ^. pc)
+        Right (m', opCode, args) -> do
+          let dbgLoop = do
+                putStrLn $ "dbg (" <> show (m ^. pc, opCode, args) <> ")> "
+                dbgLine <- getLine
+                case dbgLine of
+                  "s" -> return (m', True)
+                  "c" -> return (m', False)
+                  "st" -> print (m ^. stack) >> dbgLoop
+                  "r" -> print (m ^. registers) >> dbgLoop
+                  "dump" -> forM_ (prettyMemory $ m ^. memory) putStrLn >> dbgLoop
+                  "block" -> forM_ (blockMemory $ m ^. memory) putStrLn >> dbgLoop
+                  "set" -> return (m' & registers %~ M.insert 7 (Register (ValNumber 12345)), True)
+                  "h" -> forM_ (take 10 history) print >> dbgLoop
+                  "j" -> return (m' & pc .~ 5491 & registers %~ M.insert 0 (Register (ValNumber 6)) & stack %~ U.tail, True)
+                  _ -> dbgLoop
+          (m'', dbg') <-
+            if not dbgBreak
+              then return (m', False)
+              else dbgLoop
+
+          forM_ (m'' ^. stdOut) putChar
+
+          -- Auto-teleportation
+          let m''' =
+                if m'' ^. pc == 5449
+                  then m'' & registers %~ M.insert 7 (Register (ValNumber reg7Override))
+                  else
+                    if m'' ^. pc == 6027
+                      then m'' & pc .~ 5491 & registers %~ M.insert 0 (Register (ValNumber 6)) & stack %~ U.tail
+                      else m''
+
+          if m''' ^. halted then return () else loop lastIn' dbg' ((m ^. pc, opCode, args) : history) m'''
 
 readFile16 :: String -> IO [Word16]
 readFile16 path = do
@@ -340,7 +369,7 @@ readFile16 path = do
   return $ runGet getter input
 
 main :: IO ()
-main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
+main = runMachine 25734 . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
 
 prettyMemory :: Memory -> [String]
 prettyMemory mem = pretty . M.toList $ mem
@@ -380,3 +409,34 @@ solveMonument =
       let v = a + b * c ^ 2 + d ^ 3 - e,
       v == 399
   ]
+
+{-
+(6027,OpJt,[ValRegister 0,ValNumber 6035])
+(6030,OpAdd,[ValRegister 0,ValRegister 1,ValNumber 1])
+(6034,OpRet,[])
+(6035,OpJt,[ValRegister 1,ValNumber 6048])
+(6038,OpAdd,[ValRegister 0,ValRegister 0,ValNumber 32767])
+(6042,OpSet,[ValRegister 1,ValRegister 7])
+(6045,OpCall,[ValNumber 6027])
+(6047,OpRet,[])
+(6048,OpPush,[ValRegister 0])
+(6050,OpAdd,[ValRegister 1,ValRegister 1,ValNumber 32767])
+(6054,OpCall,[ValNumber 6027])
+(6056,OpSet,[ValRegister 1,ValRegister 0])
+(6059,OpPop,[ValRegister 0])
+(6061,OpAdd,[ValRegister 0,ValRegister 0,ValNumber 32767])
+(6065,OpCall,[ValNumber 6027])
+(6067,OpRet,[])
+-}
+f :: (Nat15, Nat15, Nat15) -> Memo (Nat15, Nat15, Nat15) Nat15 Nat15
+f (0, r1, _) = return $ r1 + 1
+f (r0, 0, r7) = memo f (r0 - 1, r7, r7)
+f (r0, r1, r7) = do
+  a <- memo f (r0, r1 - 1, r7)
+  memo f (r0 - 1, a, r7)
+
+fMemo :: (Nat15, Nat15, Nat15) -> Nat15
+fMemo = startEvalMemo . f
+
+findR7 :: IO ()
+findR7 = mapM_ print [(r7, v) | r7 <- [1 .. 32767], let v = fMemo (4, 1, traceShowId r7), v == 6]
