@@ -5,8 +5,11 @@ import Data.Binary.Get (getWord16le, isEmpty, runGet)
 import Data.Bits
 import Data.ByteString.Builder (doubleBE, toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
+import Data.IntMap.Lazy (insertLookupWithKey)
+import Data.List.Split
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
+import Data.Set qualified as S
 import Data.Text qualified as T
 import Relude.Unsafe qualified as U
 import System.IO (getChar, getLine, putChar)
@@ -161,8 +164,8 @@ nat15At m a = toNat15 m $ (m ^. memory) M.! a
 getOpCode :: Machine -> Maybe OpCode
 getOpCode m = toOpCode . nat15At m $ m ^. pc
 
-step :: Bool -> Machine -> Machine
-step dbg m = runOp dbg m opCode args
+step :: Machine -> (Machine, OpCode, [Value])
+step m = (runOp m opCode args, opCode, args)
   where
     opCode = case getOpCode m of
       Nothing -> error "Invalid opcode"
@@ -183,15 +186,10 @@ takeRegisterArg = deref . U.head
     deref (ValRegister rId) = rId
     deref _ = error "Bad dereference"
 
-runOp :: Bool -> Machine -> OpCode -> [Value] -> Machine
-runOp dbg m opCode args =
-  let outM = resetOut $ if jumped then m' else m' & pc .~ nextInstr
-   in if dbg
-        then
-          traceShow (m ^. stack) $
-            traceShow (m ^. registers) $
-              traceShow (m ^. pc, opCode, args) $ outM
-        else outM
+runOp :: Machine -> OpCode -> [Value] -> Machine
+runOp m opCode args =
+  traceShow (m ^. pc, opCode, args) $
+    resetOut $ if jumped then m' else m' & pc .~ nextInstr
   where
     (a, b, c) = takeNat15Args m args
     ra = takeRegisterArg args
@@ -248,15 +246,54 @@ runMachine =
                 "west",
                 "west",
                 "passage",
-                "ladder"
+                "ladder",
+                "west",
+                "south",
+                "north",
+                "take can",
+                "use can",
+                "use lantern",
+                "west",
+                "ladder",
+                "darkness",
+                "continue",
+                "west",
+                "west",
+                "west",
+                "west",
+                "north",
+                "take red coin", -- 2
+                "north",
+                "east",
+                "take concave coin", -- 7
+                "down",
+                "take corroded coin", -- 3
+                "up",
+                "west",
+                "west",
+                "take blue coin", -- 9
+                "up",
+                "take shiny coin", -- 5
+                "down",
+                "east",
+                -- 9 2 5 7 3
+                "use blue coin",
+                "use red coin",
+                "use shiny coin",
+                "use concave coin",
+                "use corroded coin",
+                "north",
+                "take teleporter",
+                "use teleporter"
               ]
         )
     )
+    False
   where
     getInput = do
       s <- getLine
       return $ s ++ "\n"
-    loop lastIn m = do
+    loop lastIn dbg m = do
       (mIn, lastIn') <- do
         if getOpCode m == Just OpIn
           then do
@@ -268,10 +305,26 @@ runMachine =
                   xs -> Just xs
               )
           else return (m, lastIn)
-      let dbg = False -- TODO: Set up a debugger / breakpointing system
-      let m' = step dbg mIn
+      let breakpoints = S.fromList []
+      let dbgBreaks = dbg || ((m ^. pc) `S.member` breakpoints)
+      let (m', opCode, args) = step mIn
+      let dbgLoop = do
+            putStrLn $ "dbg (" <> show (m ^. pc, opCode, args) <> ")> "
+            dbgLine <- getLine
+            case dbgLine of
+              "s" -> return True
+              "c" -> return False
+              "st" -> print (m ^. stack) >> dbgLoop
+              "r" -> print (m ^. registers) >> dbgLoop
+              "dump" -> forM_ (prettyMemory $ m ^. memory) putStrLn >> dbgLoop
+              "block" -> forM_ (blockMemory $ m ^. memory) putStrLn >> dbgLoop
+              _ -> dbgLoop
+      dbg' <-
+        if not dbgBreaks
+          then return False
+          else dbgLoop
       forM_ (m' ^. stdOut) putChar
-      if m' ^. halted then return () else loop lastIn' m'
+      if m' ^. halted then return () else loop lastIn' dbg' m'
 
 readFile16 :: String -> IO [Word16]
 readFile16 path = do
@@ -286,11 +339,8 @@ readFile16 path = do
             return (x : xs)
   return $ runGet getter input
 
--- TODO: Step through assembly while going between rooms, look for Jt / Jf / Eq / Gt failures
 main :: IO ()
 main = runMachine . mkMachine . mkMemory =<< readFile16 "data/challenge.bin"
-
---main = putTextLn . unlines . fmap T.pack . prettyMemory . mkMemory =<< readFile16 "data/challenge.bin"
 
 prettyMemory :: Memory -> [String]
 prettyMemory mem = pretty . M.toList $ mem
@@ -299,8 +349,10 @@ prettyMemory mem = pretty . M.toList $ mem
     pretty [] = []
     pretty ((i, opB) : rest) =
       let opCode = toOpCode (toNat15 machine opB)
-          toC (ValNumber v) = chr . fromIntegral $ unMod v
-          toC _ = '#'
+          toC (ValNumber v)
+            | v > 31 && v < 127 = show $ chr . fromIntegral $ unMod v
+            | otherwise = show v
+          toC _ = "#"
        in case opCode of
             Just op ->
               let nArgs = fromIntegral $ numArgs op
@@ -310,4 +362,21 @@ prettyMemory mem = pretty . M.toList $ mem
                     OpOut -> show (toC <$> args) : pretty rest'
                     _ -> show (unAddress i, op, args) : pretty rest'
             Nothing ->
-              show (unAddress i, "GLOBAL", opB) : pretty rest
+              show (unAddress i, "GLOBAL", toC opB) : pretty rest
+
+blockMemory :: Memory -> [String]
+blockMemory mem = (fmap . fmap) toChar . chunksOf 64 . M.toList $ mem
+  where
+    machine = mkMachine mem
+    toChar (_, ValNumber v)
+      | v > 31 && v < 127 = chr . fromIntegral $ unMod v
+      | otherwise = '.'
+    toChar _ = '.'
+
+solveMonument :: [[Integer]]
+solveMonument =
+  [ p
+    | p@[a, b, c, d, e] <- permutations [2, 7, 3, 9, 5],
+      let v = a + b * c ^ 2 + d ^ 3 - e,
+      v == 399
+  ]

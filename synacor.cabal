@@ -9,7 +9,8 @@ common common-settings
                         relude,
                         modular-arithmetic,
                         lens,
-                        binary
+                        binary,
+                        split
     default-language:   Haskell2010
     mixins:             base hiding (Prelude),
                         relude (Relude as Prelude),
