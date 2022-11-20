@@ -3,10 +3,8 @@ module Main where
 import Control.Exception
 import Control.Lens (makeLenses, (%~), (.~), (?~), (^.))
 import Control.Monad.Memo
-import Control.Monad.Par
-import Control.Monad.Par.Combinator
 import Data.Binary.Get (getWord16le, isEmpty, runGet)
-import Data.Bits
+import Data.Bits ( Bits(complement, (.&.), (.|.)) )
 import Data.ByteString.Builder (doubleBE, toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.IntMap.Lazy (insertLookupWithKey)
@@ -483,15 +481,11 @@ ORB - 9 *
 22
 -}
 
---data Cell = NumCell Int | OpCell (Int -> Int -> Int)
 data Cell = NumCell Int | OpCell Char
 
 cellStr :: Cell -> String
 cellStr (NumCell x) = show x
 cellStr (OpCell c) = [c]
-
---pathStr :: [Cell] -> String
---pathStr path = intercalate " " $ cellStr <$> path
 
 pathStr :: [Cell] -> String
 pathStr (start : path) =
@@ -509,7 +503,6 @@ evalPath path = unsafePerformIO $ do
     Left e -> error $ show e
     Right v -> putStrLn v >> return (U.read v)
 
--- 22 + 4 - 11 * 4 - 18 - 11 - 1
 shortestPath :: Maybe [Cell]
 shortestPath = go (SQ.singleton ((0, 3), []))
   where
@@ -536,5 +529,6 @@ shortestPath = go (SQ.singleton ((0, 3), []))
       where
         path' = grid M.! y M.! x : path
 
--- main :: IO ()
--- main = print $ pathStr <$> shortestPath
+-- 22 + 4 - 11 * 4 - 18 - 11 - 1
+printShortestPath :: IO ()
+printShortestPath = print $ pathStr <$> shortestPath

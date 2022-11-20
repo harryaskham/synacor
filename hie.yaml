@@ -1,22 +1,4 @@
 cradle:
   cabal:
-    - path: "src"
-      component: "lib:synacor"
-
     - path: "app/Main.hs"
       component: "synacor:exe:synacor"
-
-    - path: "src/Main.hs"
-      component: "synacor:exe:synacor"
-
-    - path: "app/Lib.hs"
-      component: "synacor:exe:synacor"
-
-    - path: "src/Lib.hs"
-      component: "synacor:exe:synacor"
-
-    - path: "test"
-      component: "synacor:test:synacor-testsuite"
-
-    - path: "src"
-      component: "synacor:test:synacor-testsuite"

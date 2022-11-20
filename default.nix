@@ -1,13 +1,17 @@
-{ mkDerivation, base, HUnit, lib, QuickCheck, relude }:
+{ mkDerivation, base, binary, extra, hint, lens, lib
+, modular-arithmetic, monad-memo, monad-par, monad-par-extras
+, plugins, relude, split
+}:
 mkDerivation {
   pname = "synacor";
   version = "0.1.0.0";
   src = ./.;
-  isLibrary = true;
+  isLibrary = false;
   isExecutable = true;
-  libraryHaskellDepends = [ base relude ];
-  executableHaskellDepends = [ base relude ];
-  testHaskellDepends = [ base HUnit QuickCheck relude ];
+  executableHaskellDepends = [
+    base binary extra hint lens modular-arithmetic monad-memo monad-par
+    monad-par-extras plugins relude split
+  ];
   license = "unknown";
   hydraPlatforms = lib.platforms.none;
 }

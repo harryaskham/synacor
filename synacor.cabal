@@ -67,24 +67,7 @@ common common-settings
                         -Wno-missing-local-signatures
                         -Wno-monomorphism-restriction
 
-library
-    import:             common-settings
-    hs-source-dirs:     src
-    exposed-modules:    Lib
-
 executable synacor
     import:             common-settings
     main-is:            Main.hs
-    hs-source-dirs:     app,
-                        src
-    other-modules:      Lib
-
-Test-Suite synacor-testsuite
-    import:             common-settings
-    main-is:            TestSuite.hs
-    type:               exitcode-stdio-1.0
-    hs-source-dirs:     test
-                        src
-    other-modules:      Lib
-    build-depends:      QuickCheck,
-                        HUnit
+    hs-source-dirs:     app
