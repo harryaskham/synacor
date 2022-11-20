@@ -10,13 +10,19 @@ import Data.Bits
 import Data.ByteString.Builder (doubleBE, toLazyByteString, word16LE)
 import Data.ByteString.Lazy qualified as BL
 import Data.IntMap.Lazy (insertLookupWithKey)
+import Data.List hiding (unlines)
+import Data.List.Extra (minimumOn)
 import Data.List.Split
 import Data.Map.Strict qualified as M
 import Data.Modular (Mod, toMod, unMod)
+import Data.Sequence qualified as SQ
 import Data.Set qualified as S
 import Data.Text qualified as T
+import Language.Haskell.Interpreter
+import Relude.Extra (Foldable1 (minimumOn1))
 import Relude.Unsafe qualified as U
 import System.IO (getChar, getLine, putChar)
+import System.IO.Unsafe
 import Prelude hiding (getLine)
 
 newtype Register = Register Value deriving (Show)
@@ -304,7 +310,22 @@ runMachine reg7Override =
                 "north",
                 "north",
                 "north",
-                "take orb"
+                "take orb",
+                "north",
+                "east",
+                "east",
+                "north",
+                "west",
+                "south",
+                "east",
+                "east",
+                "west",
+                "north",
+                "north",
+                "east",
+                "vault",
+                "take mirror",
+                "use mirror"
               ]
         )
     )
@@ -449,3 +470,71 @@ fMemo = startEvalMemo . f
 
 findR7 :: IO ()
 findR7 = mapM_ print [(r7, v) | r7 <- [1 .. 32767], let v = fMemo (4, 1, traceShowId r7), v == 6]
+
+{-
+        DOOR
+  * 8 -  1
+
+  4 * 11 *
+
+  + 4 -  18
+
+ORB - 9 *
+22
+-}
+
+--data Cell = NumCell Int | OpCell (Int -> Int -> Int)
+data Cell = NumCell Int | OpCell Char
+
+cellStr :: Cell -> String
+cellStr (NumCell x) = show x
+cellStr (OpCell c) = [c]
+
+--pathStr :: [Cell] -> String
+--pathStr path = intercalate " " $ cellStr <$> path
+
+pathStr :: [Cell] -> String
+pathStr (start : path) =
+  let n = (length path `div` 2)
+   in replicate n '(' ++ cellStr start ++ go path
+  where
+    go [] = ""
+    go (a : b : xs) = cellStr a <> cellStr b <> ")" ++ go xs
+
+evalPath :: [Cell] -> Int
+evalPath path = unsafePerformIO $ do
+  print $ pathStr path
+  res <- runInterpreter $ setImports ["Prelude"] >> eval (pathStr path)
+  case res of
+    Left e -> error $ show e
+    Right v -> putStrLn v >> return (U.read v)
+
+-- 22 + 4 - 11 * 4 - 18 - 11 - 1
+shortestPath :: Maybe [Cell]
+shortestPath = go (SQ.singleton ((0, 3), []))
+  where
+    rows =
+      [ [OpCell '*', NumCell 8, OpCell '-', NumCell 1],
+        [NumCell 4, OpCell '*', NumCell 11, OpCell '*'],
+        [OpCell '+', NumCell 4, OpCell '-', NumCell 18],
+        [NumCell 22, OpCell '-', NumCell 9, OpCell '*']
+      ]
+    grid = M.fromList $ zip [0 ..] [M.fromList $ zip [0 ..] row | row <- rows]
+    ns (x, y) =
+      catMaybes $
+        [ if x > 0 then Just (x -1, y) else Nothing,
+          if y > 0 then Just (x, y -1) else Nothing,
+          if x < 3 then Just (x + 1, y) else Nothing,
+          if y < 3 then Just (x, y + 1) else Nothing
+        ]
+    go SQ.Empty = Nothing
+    go (((x, y), path) SQ.:<| rest)
+      | (x, y) == (3, 0) && evalPath (reverse path') == 30 = Just (reverse path')
+      | otherwise =
+        let nextStates = [(c, path') | c <- ns (x, y), c /= (0, 3)]
+         in go $ rest SQ.>< SQ.fromList nextStates
+      where
+        path' = grid M.! y M.! x : path
+
+-- main :: IO ()
+-- main = print $ pathStr <$> shortestPath

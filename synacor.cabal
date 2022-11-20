@@ -13,7 +13,10 @@ common common-settings
                         split,
                         monad-memo,
                         monad-par,
-                        monad-par-extras
+                        monad-par-extras,
+                        plugins,
+                        extra,
+                        hint
     default-language:   Haskell2010
     mixins:             base hiding (Prelude),
                         relude (Relude as Prelude),
