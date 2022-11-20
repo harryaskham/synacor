@@ -295,7 +295,16 @@ runMachine reg7Override =
                 "north",
                 "take teleporter",
                 "use teleporter",
-                ""
+                "north",
+                "north",
+                "north",
+                "north",
+                "north",
+                "north",
+                "north",
+                "north",
+                "north",
+                "take orb"
               ]
         )
     )
